@@ -1,0 +1,233 @@
+---
+title: "Burn-ceRNA"
+author: "Zou Junbo"
+date: "2024.5.7"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+# mRNA analysis
+```{r}
+#source('http://bioconductor.org/biocLite.R')
+library(GEOquery)
+gset<-getGEO('GSE77791',AnnotGPL = TRUE,GSEMatrix = TRUE,destdir = 'E:/Burn/GSE77791')
+show(gset)
+zjb1<-gset$GSE77791_series_matrix.txt.gz@assayData[['exprs']]
+zjb1<-na.omit(zjb1)
+pc<-prcomp(t(zjb1))#,scale.=TRUE
+pcx<-data.frame(pc$x)
+pdata<-pData(gset[[1]])
+pheon<-data.frame(cbind(pdata$geo_accession,pdata$title))
+colnames(pheon)<-c('ID','group')
+pheon$group<-c(rep('BURN',104),rep('NORMAL',13))
+pcr<-cbind(samples=rownames(pcx),pheon,pcx)
+library(ggplot2)
+p<-ggplot(pcr)+aes(PC1,PC2)+geom_point(aes(color=group),size=5)+geom_text(aes(label=ID),size=2)
+print(p)
+library(reshape2)
+zjbL<-melt(zjb1)
+library(tidyverse)
+zjbLs<-left_join(zjbL,pheon,by=c('Var2'='ID'))
+p2<-ggplot(zjbLs)+aes(value,fill=group)+geom_histogram(bins = 200)+facet_wrap(~Var2)
+print(p2)
+```
+
+# DE-mRNA filering by limma
+```{r}
+library(limma)#ת??Ϊlimma????ʶ???ĸ?ʽ
+design.factor<-factor(pheon$group,levels = c('BURN','NORMAL'))
+design.matrix<-model.matrix(~0+design.factor)
+colnames(design.matrix)<-levels(design.factor)
+design.matrix
+fit<-lmFit(zjb1,design.matrix)
+cont.matrix<-makeContrasts(BURN-NORMAL,levels = design.matrix)
+fit2<-contrasts.fit(fit,cont.matrix)
+fit2<-eBayes(fit2)
+DEG<-topTable(fit2,adjust='fdr',sort.by = 'B',number = 100000)
+res<-DEG
+logFC_cutoff<-with(res,mean(abs(logFC))+2*sd(abs(logFC)))
+#logFC_cutoff<-1.5
+res$change<-as.factor(ifelse(res$P.Val<0.05&abs(res$logFC)>logFC_cutoff,ifelse(res$logFC>logFC_cutoff,'UP','DOWN'),'NOT'))
+this_title<-paste0('cutoff for logFC is',round(logFC_cutoff,3),'\nThe number of up gene is ',nrow(res[res$change=='UP',]),'\n The number of down gene is',nrow(res[res$change=='DOWN',]))
+library(ggplot2)
+pvol<-ggplot(res)+aes(logFC,-log10(P.Value),color=change)+geom_point(alpha=0.4,size=1.75)+xlab('log2 fold change')+ylab('-log10 p-value')+ggtitle(this_title)+theme(plot.title = element_text(size=15,hjust = 0.5))+scale_colour_manual(values = c('blue','black','red'))+theme_classic()
+pvol
+
+```
+```{r}
+annotation_col_burn <- data.frame(GROUP = c(rep('BURN',104),rep('NORMAL',13)))
+rownames(annotation_col_burn) = rownames(pdata)
+pheatmap(filter(zjb2,rownames(zjb2) %in% rownames(res[res$change!='NOT',]) ),scale = 'row',annotation_col = annotation_col_burn)
+```
+
+
+
+# ????ע?ͼ?????ͼ????
+```{r}
+library(annotate)# ????ע??
+library(rat2302.db)#????ע?Ͱ?
+library(hugene10sttranscriptcluster.db)# humankind
+library(hugene10stprobeset.db)# humankind
+library(pd.hg.u133.plus.2)#??ͬƽ̨??Ҫ??ͬע?Ͱ????????أ???׺?ӡ?.db??
+DEG$Symbols<-getSYMBOL(rownames(DEG),'pd.hg.u133.plus.2')
+DEG$ENTREZID<-getEG(rownames(DEG),'pd.hg.u133.plus.2')
+write.csv(mRNA,'D:/Burn/GSE77791/mRNA.csv')
+head(DEG)
+```
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db)#??ע?Ͱ?
+library(org.Rn.eg.db)#????ע?Ͱ?
+# ????ת?? gen<-bitr(feige$V1,fromType = 'SYMBOL',toType = 'ENTREZID',OrgDb = org.Hs.eg.db)
+egobp<-enrichGO(gene = DEG$Symbols[1:300],OrgDb = org.Hs.eg.db,keyType = 'SYMBOL',ont = 'BP')
+barplot(egobp,showCategory = 20)
+dotplot(egobp)
+enrichplot::emapplot(egobp)
+cnetplot(egobp,categorySize="pvalue")
+
+```
+# ?ź?ͨ·?Ļ???
+```{r}
+library(Rgraphviz)
+library(topGO)
+plotGOgraph(egobp)
+
+```
+# KEGG?ź?ͨ·?Ļ???
+```{r}
+kk<-enrichKEGG(gene = DEG$ENTREZID,organism = 'rno')
+dotplot(kk,showCategory = 10)
+barplot(kk,showCategory = 10)
+browseKEGG(kk,'rno04010')
+```
+# db annotate
+```{r}
+aa<-as.data.frame(zjb1)
+aa$Symbols<-getSYMBOL(rownames(aa),"rat2302.db")
+aa<-na.omit(aa)
+write.csv(aa,'D:/Cerebral Infarction/GSE97537/aa.csv')
+```
+
+#Ҳ?????????Դ???ע?Ͱ?????ע?ͣ?GPLƽ̨
+```{r}
+gpl<-getGEO('GPL6480',destdir = 'D:/Burn/GSE90051')
+head(Table(gpl)[,c(1,2,4)])#?鿴??Ҫ????Ϣ?ڵڼ??У?ɸѡ
+gplname<-Table(gpl)[,c(1,2,4)]#ɸѡ
+zjb6<-left_join(miRNAS,gplname,by=c('X'='ID'))#?ϲ?,??????Ӧ??Ϣע???ھ?????
+rownames(zjb4)<-zjb6$`Transcript ID(Array Design)`
+pheatmap(zjb4,scale='row')
+```
+
+```{r}
+data(geneList)
+    gene <- names(geneList)[abs(geneList) > 2]
+    ego <- enrichGO(gene  = gene,
+        universe      = names(geneList),
+        OrgDb         = org.Hs.eg.db,
+        ont           = "BP",
+        pAdjustMethod = "BH",
+        pvalueCutoff  = 0.01,
+        qvalueCutoff  = 0.05,
+        readable      = TRUE)
+    d <- godata('org.Hs.eg.db', ont="BP")
+    ego2 <- pairwise_termsim(ego, method="Wang", semData = d)
+```
+
+# miRNA analysis
+```{r}
+#source('http://bioconductor.org/biocLite.R')
+library(GEOquery)
+gset<-getGEO('GSE113620',AnnotGPL = TRUE,GSEMatrix = TRUE,destdir = 'E:/Burn/GSE113620')
+show(gset)
+zjb1<-gset$GSE113620_series_matrix.txt.gz@assayData[['exprs']]
+zjb1<-na.omit(zjb1)
+pc<-prcomp(t(zjb1))#,scale.=TRUE
+pcx<-data.frame(pc$x)
+pdata<-pData(gset[[1]])
+pheon<-data.frame(cbind(pdata$geo_accession,pdata$title))
+colnames(pheon)<-c('ID','group')
+pheon$group<-c(rep('BURN',6),rep('NORMAL',8))
+pcr<-cbind(samples=rownames(pcx),pheon,pcx)
+library(ggplot2)
+p<-ggplot(pcr)+aes(PC1,PC2)+geom_point(aes(color=group),size=5)+geom_text(aes(label=ID),size=2)
+print(p)
+library(reshape2)
+zjbL<-melt(zjb1)
+library(tidyverse)
+zjbLs<-left_join(zjbL,pheon,by=c('Var2'='ID'))
+p2<-ggplot(zjbLs)+aes(value,fill=group)+geom_histogram(bins = 200)+facet_wrap(~Var2)
+print(p2)
+```
+
+# DEmiRNAs filtering
+```{r}
+library(limma)#ת??Ϊlimma????ʶ???ĸ?ʽ
+design.factor<-factor(pheon$group,levels = c('BURN','NORMAL'))
+design.matrix<-model.matrix(~0+design.factor)
+colnames(design.matrix)<-levels(design.factor)
+design.matrix
+fit<-lmFit(zjb1,design.matrix)
+cont.matrix<-makeContrasts(BURN-NORMAL,levels = design.matrix)
+fit2<-contrasts.fit(fit,cont.matrix)
+fit2<-eBayes(fit2)
+DEG<-topTable(fit2,adjust='fdr',sort.by = 'B',number = 100000)
+res<-DEG
+logFC_cutoff<-with(res,mean(abs(logFC))+2*sd(abs(logFC)))
+#logFC_cutoff<-1.5
+res$change<-as.factor(ifelse(res$P.Val<0.05&abs(res$logFC)>logFC_cutoff,ifelse(res$logFC>logFC_cutoff,'UP','DOWN'),'NOT'))
+this_title<-paste0('cutoff for logFC is',round(logFC_cutoff,3),'\nThe number of up gene is ',nrow(res[res$change=='UP',]),'\n The number of down gene is',nrow(res[res$change=='DOWN',]))
+library(ggplot2)
+pvol<-ggplot(res)+aes(logFC,-log10(P.Value),color=change)+geom_point(alpha=0.4,size=1.75)+xlab('log2 fold change')+ylab('-log10 p-value')+ggtitle(this_title)+theme(plot.title = element_text(size=15,hjust = 0.5))+scale_colour_manual(values = c('blue','black','red'))+theme_classic()
+pvol
+
+```
+
+# lncRNA analysis
+```{r}
+#source('http://bioconductor.org/biocLite.R')
+library(GEOquery)
+gset<-getGEO('GSE83286',AnnotGPL = TRUE,GSEMatrix = TRUE,destdir = 'E:/Burn/GSE83286')
+show(gset)
+zjb1<-gset$GSE83286_series_matrix.txt.gz@assayData[['exprs']]
+zjb1<-na.omit(zjb1)
+pc<-prcomp(t(zjb1))#,scale.=TRUE
+pcx<-data.frame(pc$x)
+pdata<-pData(gset[[1]])
+pheon<-data.frame(cbind(pdata$geo_accession,pdata$title))
+colnames(pheon)<-c('ID','group')
+pheon$group<-c(rep('BURN',3),rep('NORMAL',3))
+pcr<-cbind(samples=rownames(pcx),pheon,pcx)
+library(ggplot2)
+p<-ggplot(pcr)+aes(PC1,PC2)+geom_point(aes(color=group),size=5)+geom_text(aes(label=ID),size=2)
+print(p)
+library(reshape2)
+zjbL<-melt(zjb1)
+library(tidyverse)
+zjbLs<-left_join(zjbL,pheon,by=c('Var2'='ID'))
+p2<-ggplot(zjbLs)+aes(value,fill=group)+geom_histogram(bins = 200)+facet_wrap(~Var2)
+print(p2)
+```
+
+# DElncRNA filtering
+```{r}
+library(limma)#ת??Ϊlimma????ʶ???ĸ?ʽ
+design.factor<-factor(pheon$group,levels = c('BURN','NORMAL'))
+design.matrix<-model.matrix(~0+design.factor)
+colnames(design.matrix)<-levels(design.factor)
+design.matrix
+fit<-lmFit(zjb1,design.matrix)
+cont.matrix<-makeContrasts(BURN-NORMAL,levels = design.matrix)
+fit2<-contrasts.fit(fit,cont.matrix)
+fit2<-eBayes(fit2)
+DEG<-topTable(fit2,adjust='fdr',sort.by = 'B',number = 100000)
+res<-DEG
+logFC_cutoff<-with(res,mean(abs(logFC))+2*sd(abs(logFC)))
+#logFC_cutoff<-1.5
+res$change<-as.factor(ifelse(res$P.Val<0.05&abs(res$logFC)>logFC_cutoff,ifelse(res$logFC>logFC_cutoff,'UP','DOWN'),'NOT'))
+this_title<-paste0('cutoff for logFC is',round(logFC_cutoff,3),'\nThe number of up gene is ',nrow(res[res$change=='UP',]),'\n The number of down gene is',nrow(res[res$change=='DOWN',]))
+library(ggplot2)
+pvol<-ggplot(res)+aes(logFC,-log10(P.Value),color=change)+geom_point(alpha=0.4,size=1.75)+xlab('log2 fold change')+ylab('-log10 p-value')+ggtitle(this_title)+theme(plot.title = element_text(size=15,hjust = 0.5))+scale_colour_manual(values = c('blue','black','red'))+theme_classic()
+pvol
+
+```
